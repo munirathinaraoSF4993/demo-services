@@ -99,8 +99,42 @@ namespace ReportServices.Controllers.demos
                     _items.Add(catalogItem);
                 }
             }
-
+            else if (type == ItemTypeEnum.File)
+            {
+                var fileListProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(Path.Combine(targetFolder, "Files"));
+                foreach (var file in fileListProvider.GetDirectoryContents("").Where(f => !f.IsDirectory))
+                {
+                    CatalogItem catalogItem = new CatalogItem();
+                    catalogItem.Name = Path.GetFileNameWithoutExtension(file.Name);
+                    catalogItem.Type = ItemTypeEnum.File;
+                    catalogItem.Id = Regex.Replace(catalogItem.Name, @"[^0-9a-zA-Z]+", "_");
+                    catalogItem.Extension = Path.GetExtension(file.Name);
+                    _items.Add(catalogItem);
+                }
+            }
             return _items;
+        }
+
+        public override BoldReports.RDL.DOM.Server.ItemDefinition GetItemDefinition(string itemName)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(Path.GetFileNameWithoutExtension(itemName)))
+                    return null;
+
+                BoldReports.RDL.DOM.Server.ItemDefinition itemDefinition = new BoldReports.RDL.DOM.Server.ItemDefinition();
+                itemDefinition.FileContent = this.GetFileContent(itemName);
+                itemDefinition.FilePassword = this.GetFilePassword(itemName);
+                itemDefinition.Extension = Path.GetExtension(itemName);
+
+                return itemDefinition;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Unable to load the report resource '{itemName}'. Please check the resource name and ensure the file exists", ex);
+            }
+
+            return null;
         }
 
         public override bool CreateReport(string reportName, string folderName, byte[] reportdata, out string exception)
@@ -116,6 +150,70 @@ namespace ReportServices.Controllers.demos
             if (File.Exists(reportPath))
             {
                 return this.ReadFiles(reportPath);
+            }
+
+            return null;
+        }
+
+        private string GetFilePassword(string itemName)
+        {
+            if (itemName.EndsWith(".pfx", StringComparison.OrdinalIgnoreCase))
+            {
+                string passwordFile = Path.Combine(this.basePath, "resources", "demos", "Files", "CertificateCredentials.xml");
+
+                if (File.Exists(passwordFile))
+                {
+                    XmlDocument xml = new XmlDocument();
+                    xml.Load(passwordFile);
+
+                    foreach (XmlNode certNode in xml.SelectNodes("//CertificateCredentials/Certificate"))
+                    {
+                        if (certNode == null)
+                            continue;
+
+                        string name = certNode.SelectSingleNode("name")?.InnerText?.Trim() ?? string.Empty;
+                        string password = certNode.SelectSingleNode("password")?.InnerText?.Trim();
+
+                        if (!name.Equals(Path.GetFileNameWithoutExtension(itemName), StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!string.IsNullOrEmpty(password))
+                        {
+                            return password;
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private byte[] GetFileContent(string itemName)
+        {
+            string imagePath = Path.Combine(this.basePath, "resources", "demos", itemName);
+            string[] fileExtensions = { ".pfx", ".pdf", ".html" };
+
+            if (fileExtensions.Any(extension => itemName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
+            {
+                imagePath = Path.Combine(this.basePath, "resources", "demos", "Files", itemName);
+            }
+            if (File.Exists(imagePath))
+            {
+                using (Stream stream = this.ReadFiles(imagePath))
+                {
+                    if (stream == null)
+                        return null;
+
+                    using (MemoryStream memoryStream = new MemoryStream())
+                    {
+                        stream.CopyTo(memoryStream);
+                        if (memoryStream.Length == 0)
+                            return null;
+
+                        return memoryStream.ToArray();
+                    }
+                }
             }
 
             return null;
